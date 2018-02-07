@@ -63,7 +63,7 @@ static int kraken_start_transaction(struct usb_kraken *kraken)
 {
     return usb_control_msg(kraken->udev,
                            usb_sndctrlpipe(kraken->udev, 0),
-                           2, 0x4d, 0x0000, 0, NULL, 0, 1000);
+                           0x6, 0x4d, 0x0000, 0, NULL, 0, 1000);
 }
 
 static int kraken_send_message(struct usb_kraken *kraken,
@@ -71,7 +71,7 @@ static int kraken_send_message(struct usb_kraken *kraken,
 {
     int sent = 0;
     int retval = usb_bulk_msg(kraken->udev,
-                              usb_sndbulkpipe(kraken->udev, 2),
+                              usb_sndintpipe(kraken->udev, 1),
                               message, length, &sent, 3000);
     if (retval != 0)
         return retval;
@@ -85,7 +85,7 @@ static int kraken_receive_message(struct usb_kraken *kraken,
 {
     int received = 0;
     int retval = usb_bulk_msg(kraken->udev,
-                              usb_rcvbulkpipe(kraken->udev, 2),
+                              usb_rcvintpipe(kraken->udev, 0x81),
                               message, expected_length, &received, 3000);
     if (retval != 0)
         return retval;
@@ -98,9 +98,7 @@ static void kraken_update(struct usb_kraken *kraken)
 {
     int retval = 0;
 
-    if (0 != (retval = kraken_start_transaction(kraken)))
-        dev_err(&kraken->udev->dev, "Failed to start update: %d\n", retval);
-    else if (0 != (retval = kraken_send_message(
+    if (0 != (retval = kraken_send_message(
                        kraken, (u8*)&kraken->setfan_msg,
                                            sizeof(kraken->setfan_msg))))
         dev_err(&kraken->udev->dev, "Failed to send update: %d\n", retval);
@@ -108,8 +106,6 @@ static void kraken_update(struct usb_kraken *kraken)
                        kraken, (u8*)&kraken->status_msg,
                                            sizeof(kraken->status_msg))))
         dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
-    else if (0 != (retval = kraken_start_transaction(kraken)))
-        dev_err(&kraken->udev->dev, "Failed to start update: %d\n", retval);
     else if (0 != (retval = kraken_send_message(
                        kraken, (u8*)&kraken->setpump_msg,
                                            sizeof(kraken->setpump_msg))))
@@ -118,6 +114,8 @@ static void kraken_update(struct usb_kraken *kraken)
                        kraken, (u8*)&kraken->status_msg,
                                            sizeof(kraken->status_msg))))
         dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
+
+    //dev_info(&kraken->udev->dev, "Update completed: %d\n", retval);
 }
 
 static ssize_t show_pump_throttle(struct device *dev,
@@ -245,10 +243,17 @@ static void update_work_function(struct work_struct *param)
 static int kraken_probe(struct usb_interface *interface,
                         const struct usb_device_id *id)
 {
-    struct usb_device *udev = interface_to_usbdev(interface);
-    struct usb_kraken *dev = NULL;
-    int retval = -ENOMEM;
-    dev = kmalloc(sizeof(struct usb_kraken), GFP_KERNEL);
+    struct usb_device *udev;
+    struct usb_kraken *dev;
+    int retval;
+
+    udev = interface_to_usbdev(interface);
+    dev = NULL;
+    retval = -ENOMEM;
+
+    pr_info("Probing for NZXT X52 water cooler\n");
+
+    dev = kmalloc(sizeof(*dev), GFP_KERNEL);
     if (!dev)
         goto error_dev;
 
@@ -285,12 +290,19 @@ static int kraken_probe(struct usb_interface *interface,
         goto error;
     }
 
+    u8 *descriptor = kmalloc(130, GFP_KERNEL);
+
     retval = usb_control_msg(udev,
                              usb_sndctrlpipe(udev, 0),
-                             2, 0x40, 0x0002, 0, NULL, 0, 1000);
+                             6, 0x80, 0x0303, 0x409,
+                             descriptor, sizeof(descriptor), 1000);
+
+    kfree(descriptor);
+
     if (retval) {
-        dev_err(&interface->dev, "Error sending initial control message\n");
-        goto error;
+        dev_err(&interface->dev, "Error sending initial control message: %d\n",
+                retval);
+        //goto error;
     }
 
     dev_info(&interface->dev, "Kraken connected\n");
@@ -298,7 +310,7 @@ static int kraken_probe(struct usb_interface *interface,
     dev->update_timer.function = &update_timer_function;
     hrtimer_start(&dev->update_timer, ktime_set(1, 0), HRTIMER_MODE_REL);
     dev->update_workqueue = create_singlethread_workqueue("kraken_up");
-    INIT_WORK(&dev->update_work, &update_work_function);
+    INIT_WORK(&dev->update_work, update_work_function);
     return 0;
 
 error:
