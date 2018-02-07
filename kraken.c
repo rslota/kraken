@@ -87,28 +87,39 @@ static int kraken_receive_message(struct usb_kraken *kraken,
     return 0;
 }
 
-static void kraken_update(struct usb_kraken *kraken)
+static int kraken_update(struct usb_kraken *kraken)
 {
     int retval = 0;
 
-    if (0 != (retval = kraken_send_message(
-                       kraken, (u8*)&kraken->setfan_msg,
-                                           sizeof(kraken->setfan_msg))))
-        dev_err(&kraken->udev->dev, "Failed to send update: %d\n", retval);
-    else if (0 != (retval = kraken_receive_message(
-                       kraken, (u8*)&kraken->status_msg,
-                                           sizeof(kraken->status_msg))))
-        dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
-    else if (0 != (retval = kraken_send_message(
-                       kraken, (u8*)&kraken->setpump_msg,
-                                           sizeof(kraken->setpump_msg))))
-        dev_err(&kraken->udev->dev, "Failed to send update: %d\n", retval);
-    else if (0 != (retval = kraken_receive_message(
-                       kraken, (u8*)&kraken->status_msg,
-                                           sizeof(kraken->status_msg))))
-        dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
+    retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
+                                 sizeof(kraken->setfan_msg));
+    if (retval < 0)
+        goto send_failed;
 
-    //dev_info(&kraken->udev->dev, "Update completed: %d\n", retval);
+    retval = kraken_receive_message(kraken, (u8*)&kraken->status_msg,
+                                    sizeof(kraken->status_msg));
+    if (retval < 0)
+        goto received_failed;
+
+    retval = kraken_send_message(kraken, (u8*)&kraken->setpump_msg,
+                                 sizeof(kraken->setpump_msg));
+    if (retval < 0)
+        goto send_failed;
+
+    retval = kraken_receive_message(kraken, (u8*)&kraken->status_msg,
+                                    sizeof(kraken->status_msg));
+    if (retval < 0)
+        goto received_failed;
+
+    return 0;
+
+send_failed:
+    dev_err(&kraken->udev->dev, "Failed to send update: %d\n", retval);
+    return retval;
+
+received_failed:
+    dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
+    return retval;
 }
 
 static ssize_t show_pump_throttle(struct device *dev,
@@ -292,10 +303,10 @@ static int kraken_probe(struct usb_interface *interface,
 
     kfree(descriptor);
 
-    if (retval) {
+    if (retval < 0) {
         dev_err(&interface->dev, "Error sending initial control message: %d\n",
                 retval);
-        //goto error;
+        goto error;
     }
 
     dev_info(&interface->dev, "Kraken connected\n");
