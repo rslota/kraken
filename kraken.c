@@ -6,7 +6,7 @@
 #define VENDOR_ID   0x1E71
 #define PRODUCT_ID  0x170E
 
-#define MIN_THROTTLE    60
+#define MIN_THROTTLE    0
 #define MAX_THROTTLE    100
 
 static const struct usb_device_id id_table[] = {
@@ -58,13 +58,6 @@ static struct usb_driver kraken_driver = {
     .disconnect = kraken_disconnect,
     .id_table =	id_table,
 };
-
-static int kraken_start_transaction(struct usb_kraken *kraken)
-{
-    return usb_control_msg(kraken->udev,
-                           usb_sndctrlpipe(kraken->udev, 0),
-                           0x6, 0x4d, 0x0000, 0, NULL, 0, 1000);
-}
 
 static int kraken_send_message(struct usb_kraken *kraken,
                                u8 *message, int length)
@@ -176,8 +169,8 @@ static ssize_t set_fan_throttle(struct device *dev,
 static DEVICE_ATTR(fan_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
                    show_fan_throttle, set_fan_throttle);
 
-static ssize_t show_temp(struct device *dev,
-                         struct device_attribute *attr, char *buf)
+static ssize_t show_liquid_temp(struct device *dev,
+                                struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev);
     struct usb_kraken *kraken = usb_get_intfdata(intf);
@@ -185,7 +178,7 @@ static ssize_t show_temp(struct device *dev,
     return sprintf(buf, "%u\n", kraken->status_msg.liquid_temp);
 }
 
-static DEVICE_ATTR(temp, S_IRUGO, show_temp, NULL);
+static DEVICE_ATTR(liquid_temp, S_IRUGO, show_liquid_temp, NULL);
 
 static ssize_t show_pump_rpm(struct device *dev,
                              struct device_attribute *attr, char *buf)
@@ -219,7 +212,7 @@ static void kraken_remove_device_files(struct usb_interface *interface)
 {
     device_remove_file(&interface->dev, &dev_attr_pump_throttle);
     device_remove_file(&interface->dev, &dev_attr_fan_throttle);
-    device_remove_file(&interface->dev, &dev_attr_temp);
+    device_remove_file(&interface->dev, &dev_attr_liquid_temp);
     device_remove_file(&interface->dev, &dev_attr_pump_rpm);
     device_remove_file(&interface->dev, &dev_attr_fan_rpm);
 }
@@ -281,7 +274,7 @@ static int kraken_probe(struct usb_interface *interface,
         (retval = device_create_file(&interface->dev,
                                      &dev_attr_fan_throttle)) ||
         (retval = device_create_file(&interface->dev,
-                                     &dev_attr_temp)) ||
+                                     &dev_attr_liquid_temp)) ||
         (retval = device_create_file(&interface->dev,
                                      &dev_attr_pump_rpm)) ||
         (retval = device_create_file(&interface->dev,
