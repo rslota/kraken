@@ -6,7 +6,7 @@
 #define VENDOR_ID   0x1E71
 #define PRODUCT_ID  0x170E
 
-#define MIN_THROTTLE    0
+#define MIN_THROTTLE    50
 #define MAX_THROTTLE    100
 
 static const struct usb_device_id id_table[] = {
