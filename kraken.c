@@ -168,7 +168,7 @@ static ssize_t set_pump_throttle(struct device *dev,
 }
 
 static DEVICE_ATTR(pump_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
-                   show_pump_throttle, set_pump_throttle);
+               show_pump_throttle, set_pump_throttle);
 
 //
 // Fan throttle
