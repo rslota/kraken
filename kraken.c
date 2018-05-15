@@ -314,6 +314,7 @@ static int kraken_probe(struct usb_interface *interface,
     struct usb_device *udev;
     struct usb_kraken *dev;
     int retval;
+    u8 *descriptor;
 
     udev = interface_to_usbdev(interface);
     dev = NULL;
@@ -362,7 +363,7 @@ static int kraken_probe(struct usb_interface *interface,
         goto error;
     }
 
-    u8 *descriptor = kmalloc(130, GFP_KERNEL);
+    descriptor = kmalloc(130, GFP_KERNEL);
 
     retval = usb_control_msg(udev,
                              usb_sndctrlpipe(udev, 0),
