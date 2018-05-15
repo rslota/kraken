@@ -1,16 +1,21 @@
-# kraken
-Linux device driver that supports controlling and monitoring NZXT Kraken water coolers
+# Kraken X52 driver for linux
 
-NZXT is **NOT** involved in this project, do **NOT** contact them if your device is damaged while using this software.
+This driver is a heavily rewritten fork based on
+[https://github.com/jaksi/leviathan](https://github.com/jaksi/leviathan).
 
-Also, while it doesn't seem like the hardware could be damaged by silly USB messages (apart from overheating), I do **NOT** take any responsibility for any damage done to your cooler.
+Linux device driver that supports controlling and monitoring
+NZXT Kraken water coolers
+
+NZXT is **NOT** involved in this project, do **NOT** contact them if your
+device is damaged while using this software.
+
+Also, while it doesn't seem like the hardware could be damaged by silly USB
+messages (apart from overheating), I do **NOT** take any responsibility for
+any damage done to your cooler.
 
 # Supported devices
-* NZXT Kraken X61 (Vendor/Product ID: `2433:b200`)
-* NZXT Kraken X41 (Vendor/Product ID: `2433:b200`)
-* NZXT Kraken X31 (Vendor/Product ID: `2433:b200`) (Only for controlling the fan/pump speed, since there's no controllable LED on the device)
-
-If you have an unsupported liquid cooler and want to help out, see [CONTRIBUTING.md](CONTRIBUTING.md).
+* NZXT Kraken X52 (Vendor/Product ID: `1e71:170e`)
+(Only for controlling the fan/pump speed, I did not bother with control of RGB)
 
 # Installation
 Make sure the headers for the kernel you are running are installed.
@@ -20,57 +25,79 @@ sudo insmod kraken.ko
 ```
 
 # Usage
-The driver can be controlled with device files under `/sys/bus/usb/drivers/kraken`.
+The driver can be controlled with device files under
+`/sys/bus/usb/drivers/kraken`.
 
 Find the symbolic links that point to the connected compatible devices.
-In my case, there's only one Kraken connected.
+
+In my case, there's only one Kraken connected:
 ```Shell
-/sys/bus/usb/drivers/kraken/2-1:1.0 -> ../../../../devices/pci0000:00/0000:00:06.0/usb2/2-1/2-1:1.0
+/sys/bus/usb/drivers/kraken/1-8:1.0
 ```
 
-## Changing the speed
-The speed must be between 30 and 100.
+1-8:1.0 may vary depending on your mainboard and which connector is used.
+It is referred to as `DEVICE` below.
+
+# USB HID
+
+The usbhid driver may have seized control of the device. You may need to
+unbind it from usbhid and bind it to the kraken driver. To do this, you
+need to `echo DEVICE | sudo tee /sys/bus/usb/drivers/usbhid/unbind`, then
+`echo DEVICE | sudo tee /sys/bus/usb/drivers/kraken/bind`
+
+## Automatic control
+
+You can enable automatic control of the pump and fan based on the liquid
+temperature. It runs the pump and fan at 50% at 28C, and ramps up linearly
+to 85% at 39C. On my system, this holds the CPU temperature below 60C at
+full load, and ramps the fan and pump down to practically silent at idle.
+
+## Enabling automatic control
+
+echo '1' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
+
+## Disabling automatic control
+
+echo '0' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
+
+## Reading the liquid temperature
+
 ```Shell
-echo SPEED > /sys/bus/usb/drivers/kraken/DEVICE/speed
+cat /sys/bus/usb/drivers/kraken/DEVICE/liquid_temp
 ```
 
-## Changing the color
-The color must be in hexadecimal format (e.g., `ff00ff` for magenta).
+## Reading the pump RPM
+
 ```Shell
-echo COLOR > /sys/bus/usb/drivers/kraken/DEVICE/color
+cat /sys/bus/usb/drivers/kraken/DEVICE/pump_rpm
 ```
 
-The alternate color for the alternating mode can be set similarly.
+## Reading the fan RPM
+
 ```Shell
-echo COLOR > /sys/bus/usb/drivers/kraken/DEVICE/alternate_color
+cat /sys/bus/usb/drivers/kraken/DEVICE/fan_rpm
 ```
 
-## Changing the alternating and blinking interval
-The interval is in seconds and must be between 1 and 255.
+## Reading the current pump throttle
+
 ```Shell
-echo INTERVAL > /sys/bus/usb/drivers/kraken/DEVICE/interval
+cat /sys/bus/usb/drivers/kraken/DEVICE/pump_throttle
 ```
 
-## Changing the mode
-The mode must be one of normal, alternating, blinking and off.
+## Reading the current fan throttle
+
 ```Shell
-echo MODE > /sys/bus/usb/drivers/kraken/DEVICE/mode
+cat /sys/bus/usb/drivers/kraken/DEVICE/fan_throttle
 ```
 
-## Monitoring the liquid temperature
-The liquid temperature is returned in °C.
+## Setting the pump throttle to 65%
+
 ```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/temp
+echo 65 | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/pump_throttle
 ```
 
-## Monitoring the pump speed
-The pump speed is returned in RPM.
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/pump
-```
+## Setting the fan throttle to 65%
 
-## Monitoring the fan speed
-The fan speed is returned in RPM.
 ```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/fan
+echo 65 | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/fan_throttle
 ```
