@@ -157,8 +157,8 @@ static ssize_t set_pump_throttle(struct device *dev,
     struct usb_interface *intf = to_usb_interface(dev);
     struct usb_kraken *kraken = usb_get_intfdata(intf);
 
-    u8 speed = 0;
-    if (sscanf(buf, "%hhu", &speed) != 1 ||
+    int speed = 0;
+    if (sscanf(buf, "%d", &speed) != 1 ||
             speed < MIN_THROTTLE || speed > MAX_THROTTLE)
         return -EINVAL;
 
@@ -189,8 +189,8 @@ static ssize_t set_fan_throttle(struct device *dev,
     struct usb_interface *intf = to_usb_interface(dev);
     struct usb_kraken *kraken = usb_get_intfdata(intf);
 
-    u8 speed;
-    if (sscanf(buf, "%hhu", &speed) != 1 ||
+    int speed;
+    if (sscanf(buf, "%d", &speed) != 1 ||
             speed < MIN_THROTTLE || speed > MAX_THROTTLE)
         return -EINVAL;
 
