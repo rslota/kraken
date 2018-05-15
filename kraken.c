@@ -93,13 +93,13 @@ static int kraken_update(struct usb_kraken *kraken)
     int retval = 0;
 
     if (kraken->auto_throttle) {
-        // When liquid temp is 30, set fan and pump throttle to 65%
+        // When liquid temp is 28, set fan and pump throttle to 50%
         // When liquid temp is 39, set fan and pump throttle to 85%
 
-        int level = (((kraken->status_msg.liquid_temp - 30) * 20) / 9) + 65;
+        int level = (((kraken->status_msg.liquid_temp - 28) * 35) / 11) + 50;
 
-        if (level < 65)
-            level = 65;
+        if (level < 50)
+            level = 50;
         if (level > 100)
             level = 100;
 
