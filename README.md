@@ -54,11 +54,15 @@ full load, and ramps the fan and pump down to practically silent at idle.
 
 ## Enabling automatic control
 
+```Shell
 echo '1' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
+```
 
 ## Disabling automatic control
 
+```Shell
 echo '0' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
+```
 
 ## Reading the liquid temperature
 
