@@ -46,6 +46,7 @@ struct usb_kraken {
     struct kraken_setfan setfan_msg;
     struct kraken_setpump setpump_msg;
     struct kraken_status status_msg;
+    u8 auto_throttle;
 };
 
 static int kraken_probe(struct usb_interface *interface,
@@ -90,6 +91,21 @@ static int kraken_receive_message(struct usb_kraken *kraken,
 static int kraken_update(struct usb_kraken *kraken)
 {
     int retval = 0;
+
+    if (kraken->auto_throttle) {
+        // When liquid temp is 30, set fan and pump throttle to 65%
+        // When liquid temp is 39, set fan and pump throttle to 85%
+
+        int level = (((kraken->status_msg.liquid_temp - 30) * 20) / 9) + 65;
+
+        if (level < 65)
+            level = 65;
+        if (level > 100)
+            level = 100;
+
+        kraken->setfan_msg.fan_percent = level;
+        kraken->setpump_msg.pump_percent = level;
+    }
 
     retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
                                  sizeof(kraken->setfan_msg));
@@ -179,6 +195,35 @@ static ssize_t set_fan_throttle(struct device *dev,
 
 static DEVICE_ATTR(fan_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
                    show_fan_throttle, set_fan_throttle);
+static ssize_t show_auto_throttle(struct device *dev,
+                          struct device_attribute *attr, char *buf)
+{
+    struct usb_interface *intf = to_usb_interface(dev);
+    struct usb_kraken *kraken = usb_get_intfdata(intf);
+
+    return sprintf(buf, "%u\n", kraken->auto_throttle);
+}
+
+static ssize_t set_auto_throttle(struct device *dev,
+                         struct device_attribute *attr, const char *buf,
+                         size_t count)
+{
+    struct usb_interface *intf = to_usb_interface(dev);
+    struct usb_kraken *kraken = usb_get_intfdata(intf);
+
+    int auto_throttle;
+    if (sscanf(buf, "%d", &auto_throttle) != 1 ||
+            auto_throttle < 0 || auto_throttle > 1)
+        return -EINVAL;
+
+    kraken->auto_throttle = (auto_throttle != 0);
+
+    return count;
+}
+
+static DEVICE_ATTR(auto_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
+                   show_auto_throttle, set_auto_throttle);
+
 
 static ssize_t show_liquid_temp(struct device *dev,
                                 struct device_attribute *attr, char *buf)
@@ -226,6 +271,7 @@ static void kraken_remove_device_files(struct usb_interface *interface)
     device_remove_file(&interface->dev, &dev_attr_liquid_temp);
     device_remove_file(&interface->dev, &dev_attr_pump_rpm);
     device_remove_file(&interface->dev, &dev_attr_fan_rpm);
+    device_remove_file(&interface->dev, &dev_attr_auto_throttle);
 }
 
 enum hrtimer_restart update_timer_function(struct hrtimer *update_timer)
@@ -263,6 +309,8 @@ static int kraken_probe(struct usb_interface *interface,
 
     memset(dev, 0, sizeof(*dev));
 
+    dev->auto_throttle = 1;
+
     dev->setfan_msg.header[0] = 0x02;
     dev->setfan_msg.header[1] = 0x4d;
     dev->setfan_msg.header[2] = 0x00;
@@ -289,7 +337,9 @@ static int kraken_probe(struct usb_interface *interface,
         (retval = device_create_file(&interface->dev,
                                      &dev_attr_pump_rpm)) ||
         (retval = device_create_file(&interface->dev,
-                                     &dev_attr_fan_rpm))) {
+                                     &dev_attr_fan_rpm)) ||
+        (retval = device_create_file(&interface->dev,
+                                     &dev_attr_auto_throttle))) {
         dev_err(&interface->dev, "Error creating device files\n");
         goto error;
     }
