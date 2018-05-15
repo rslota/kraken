@@ -138,6 +138,9 @@ received_failed:
     return retval;
 }
 
+//
+// Pump throttle
+
 static ssize_t show_pump_throttle(struct device *dev,
                           struct device_attribute *attr, char *buf)
 {
@@ -167,6 +170,9 @@ static ssize_t set_pump_throttle(struct device *dev,
 static DEVICE_ATTR(pump_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
                    show_pump_throttle, set_pump_throttle);
 
+//
+// Fan throttle
+
 static ssize_t show_fan_throttle(struct device *dev,
                           struct device_attribute *attr, char *buf)
 {
@@ -195,6 +201,10 @@ static ssize_t set_fan_throttle(struct device *dev,
 
 static DEVICE_ATTR(fan_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
                    show_fan_throttle, set_fan_throttle);
+
+//
+// Auto throttle
+
 static ssize_t show_auto_throttle(struct device *dev,
                           struct device_attribute *attr, char *buf)
 {
@@ -224,6 +234,8 @@ static ssize_t set_auto_throttle(struct device *dev,
 static DEVICE_ATTR(auto_throttle, S_IRUGO | S_IWUSR | S_IWGRP,
                    show_auto_throttle, set_auto_throttle);
 
+//
+// Liquid temp
 
 static ssize_t show_liquid_temp(struct device *dev,
                                 struct device_attribute *attr, char *buf)
@@ -235,6 +247,9 @@ static ssize_t show_liquid_temp(struct device *dev,
 }
 
 static DEVICE_ATTR(liquid_temp, S_IRUGO, show_liquid_temp, NULL);
+
+//
+// Pump rpm
 
 static ssize_t show_pump_rpm(struct device *dev,
                              struct device_attribute *attr, char *buf)
@@ -249,6 +264,9 @@ static ssize_t show_pump_rpm(struct device *dev,
 }
 
 static DEVICE_ATTR(pump_rpm, S_IRUGO, show_pump_rpm, NULL);
+
+//
+// Fan rpm
 
 static ssize_t show_fan_rpm(struct device *dev,
                             struct device_attribute *attr, char *buf)
