@@ -6,7 +6,7 @@
 #define VENDOR_ID   0x1E71
 #define PRODUCT_ID  0x170E
 
-#define MIN_THROTTLE    50
+#define MIN_THROTTLE    25
 #define MAX_THROTTLE    100
 
 static const struct usb_device_id id_table[] = {
@@ -93,18 +93,46 @@ static int kraken_update(struct usb_kraken *kraken)
     int retval = 0;
 
     if (kraken->auto_throttle) {
-        // When liquid temp is 28, set fan and pump throttle to 50%
-        // When liquid temp is 39, set fan and pump throttle to 85%
+        // When liquid temp is 28, set pump throttle to 50%
+        // When liquid temp is 39, set pump throttle to 85%
 
-        int level = (((kraken->status_msg.liquid_temp - 28) * 35) / 11) + 50;
+        // When liquid temp is 28, set fan throttle to 25%
+        // When liquid temp is 39, set fan throttle to 85%
 
-        if (level < 50)
-            level = 50;
-        if (level > 100)
-            level = 100;
+        // When the liquid temp is beyond 39, linearly extrapolate up to 100%
 
-        kraken->setfan_msg.fan_percent = level;
-        kraken->setpump_msg.pump_percent = level;
+        // The temperature range of the liquid temperature
+        // that corresponds to minimum and maximum cooling
+        int min_lt = 28;
+        int max_lt = 39;
+        int rng_lt = max_lt - min_lt;
+
+        // The pump throttle range
+        int min_pt = 50;
+        int max_pt = 85;
+        int rng_pt = max_pt - min_pt;
+
+        int min_ft = 25;
+        int max_ft = 85;
+        int rng_ft = max_ft - min_ft;
+
+        int ofs_lt = kraken->status_msg.liquid_temp - min_lt;
+
+        int pt = ((ofs_lt * rng_pt) / rng_lt) + min_pt;
+        int ft = ((ofs_lt * rng_ft) / rng_lt) + min_ft;
+
+        if (pt < min_pt)
+            pt = min_pt;
+        if (pt > 100)
+            pt = 100;
+
+        if (ft < min_ft)
+            ft = min_ft;
+        if (ft > 100)
+            ft = 100;
+
+        kraken->setpump_msg.pump_percent = pt;
+        kraken->setfan_msg.fan_percent = ft;
     }
 
     retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
