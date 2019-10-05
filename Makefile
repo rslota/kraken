@@ -5,3 +5,17 @@ all:
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+install: all
+	sudo cp kraken.ko /lib/modules/$(shell uname -r)/kernel/drivers/hwmon
+
+update:
+	sudo modprobe -r kraken && \
+		make clean && \
+		make all && \
+		make install && \
+		sudo depmod && \
+		sudo modprobe kraken && \
+		dmesg | tail
+
+.PHONY: all clean install update
