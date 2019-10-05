@@ -341,7 +341,7 @@ static ssize_t attr_store(
         break;
 
     case idx_fan_enable:
-        kraken->pump_enable = value;
+        kraken->fan_enable = value;
         break;
 
     default:
@@ -532,10 +532,10 @@ static void kraken_disconnect(struct usb_interface *interface)
 }
 
 static struct usb_driver kraken_driver = {
-    .name =		  "kraken",
-    .probe =	  kraken_probe,
+    .name       = "kraken",
+    .probe      = kraken_probe,
     .disconnect = kraken_disconnect,
-    .id_table =	  id_table,
+    .id_table   = id_table,
 };
 
 module_usb_driver(kraken_driver);
