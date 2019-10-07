@@ -10,7 +10,7 @@ install: all
 	sudo cp kraken.ko /lib/modules/$(shell uname -r)/kernel/drivers/hwmon
 
 update: all
-	sudo modprobe -r kraken && \
+	sudo modprobe -r kraken; \
 		make install && \
 		sudo depmod && \
 		sudo modprobe kraken && \
