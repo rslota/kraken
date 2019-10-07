@@ -9,10 +9,8 @@ clean:
 install: all
 	sudo cp kraken.ko /lib/modules/$(shell uname -r)/kernel/drivers/hwmon
 
-update:
+update: all
 	sudo modprobe -r kraken && \
-		make clean && \
-		make all && \
 		make install && \
 		sudo depmod && \
 		sudo modprobe kraken && \
