@@ -64,13 +64,19 @@ struct usb_kraken {
     struct workqueue_struct *update_workqueue;
     struct work_struct update_work;
 
-    struct kraken_setfan setfan_msg;
     struct kraken_setpump setpump_msg;
+    struct kraken_setfan setfan_msg;
     struct kraken_status status_msg;
 
     // 0=full speed, 1=manual override, 2=automatic
     int pump_enable;
     int fan_enable;
+
+    // Limits
+    int pump_min;
+    int pump_max;
+    int fan_min;
+    int fan_max;
 };
 
 static int kraken_send_message(struct usb_kraken *kraken,
@@ -80,26 +86,80 @@ static int kraken_send_message(struct usb_kraken *kraken,
     int retval = usb_bulk_msg(kraken->udev,
                               usb_sndintpipe(kraken->udev, 1),
                               message, length, &sent, 3000);
-    if (retval != 0)
-        return retval;
-    if (sent != length)
+
+    if (unlikely(sent != length)) {
+        dev_warn_ratelimited(
+                    &kraken->udev->dev,
+                    "USB bulk send expected to send %d, but sent %d bytes\n",
+                    length, sent);
         return -EIO;
-    return 0;
+    }
+
+    return retval;
 }
 
 static int kraken_receive_message(struct usb_kraken *kraken,
                                   u8 *message, int expected_length)
 {
     int received = 0;
-    int retval = usb_bulk_msg(kraken->udev,
+    int retval;
+
+    memset(message, 0, expected_length);
+
+    retval = usb_bulk_msg(kraken->udev,
                               usb_rcvintpipe(kraken->udev, 0x81),
                               message, expected_length, &received, 3000);
-    if (retval != 0)
-        return retval;
-    if (received != expected_length)
-        return -EIO;
-    return 0;
+
+    if (unlikely(received != expected_length)) {
+        dev_warn_ratelimited(
+                    &kraken->udev->dev,
+                    "USB bulk receive expected %d, but got %d bytes\n",
+                    expected_length, received);
+    }
+
+    return retval;
 }
+
+enum attr_index {
+    // RW
+    idx_pump_pwm,
+    idx_fan_pwm,
+    idx_pump_enable,
+    idx_fan_enable,
+
+    // RO
+    idx_pump_rpm,
+    idx_fan_rpm,
+    idx_liquid_temp,
+
+    // Validation
+    idx_max
+};
+
+static const char *attr_labels[] = {
+    // RW
+    [idx_pump_pwm]      = "pump_pwm",
+    [idx_fan_pwm]       = "fan_pwm",
+    [idx_pump_enable]   = "pump_enable",
+    [idx_fan_enable]    = "fan_enable",
+
+    // RO
+    [idx_pump_rpm]      = "pump_rpm",
+    [idx_fan_rpm]       = "fan_rpm",
+    [idx_liquid_temp]   = "liquid_temp"
+};
+
+struct attr_range {
+    int min_value;
+    int max_value;
+};
+
+static const struct attr_range attr_ranges[] = {
+    [idx_pump_pwm]      = { 0, 0xFF },
+    [idx_fan_pwm]       = { 0, 0xFF },
+    [idx_pump_enable]   = { 0, INT_MAX },
+    [idx_fan_enable]    = { 0, INT_MAX }
+};
 
 static int kraken_update(struct usb_kraken *kraken)
 {
@@ -134,12 +194,14 @@ static int kraken_update(struct usb_kraken *kraken)
 
             int pt = ((ofs_lt * rng_pt) / rng_lt) + min_pt;
 
-            if (pt < min_pt)
-                pt = min_pt;
-            if (pt < 60)
-                pt = 60;
-            if (pt > 100)
-                pt = 100;
+            if (pt < kraken->pump_min)
+                pt = kraken->pump_min;
+            if (pt > kraken->pump_max)
+                pt = kraken->pump_max;
+
+            dev_dbg_ratelimited(&kraken->udev->dev,
+                                 "Auto adjusted %s to %d%%\n",
+                                 attr_labels[idx_pump_pwm], pt);
 
             kraken->setpump_msg.pump_percent = pt;
         }
@@ -150,23 +212,30 @@ static int kraken_update(struct usb_kraken *kraken)
             // The fan throttle range
             // When liquid temp is min_lt, set fan throttle to 25%
             // When liquid temp is max_lt, set fan throttle to 100%
-            const int min_ft = 66;
+            const int min_ft = 33;
             const int max_ft = 100;
             const int rng_ft = max_ft - min_ft;
 
             int ft = ((ofs_lt * rng_ft) / rng_lt) + min_ft;
 
-            if (ft < min_ft)
-                ft = min_ft;
-            if (ft > 100)
-                ft = 100;
+            if (ft < kraken->fan_min)
+                ft = kraken->fan_min;
+            if (ft > kraken->fan_max)
+                ft = kraken->fan_max;
 
             kraken->setfan_msg.fan_percent = ft;
+
+            dev_dbg_ratelimited(&kraken->udev->dev,
+                                "Auto adjusted %s to %d%%\n",
+                                attr_labels[idx_fan_pwm], ft);
         }
     }
 
-    retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
-                                 sizeof(kraken->setfan_msg));
+    dev_dbg_ratelimited(&kraken->udev->dev, "Writing %d%% to pump hardware",
+                        kraken->setpump_msg.pump_percent);
+
+    retval = kraken_send_message(kraken, (u8*)&kraken->setpump_msg,
+                                 sizeof(kraken->setpump_msg));
     if (retval < 0)
         goto send_failed;
 
@@ -175,8 +244,11 @@ static int kraken_update(struct usb_kraken *kraken)
     if (retval < 0)
         goto receive_failed;
 
-    retval = kraken_send_message(kraken, (u8*)&kraken->setpump_msg,
-                                 sizeof(kraken->setpump_msg));
+    dev_dbg_ratelimited(&kraken->udev->dev, "Writing %d%% to fan hardware",
+                        kraken->setfan_msg.fan_percent);
+
+    retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
+                                 sizeof(kraken->setfan_msg));
     if (retval < 0)
         goto send_failed;
 
@@ -195,47 +267,6 @@ receive_failed:
     dev_err(&kraken->udev->dev, "Failed to receive: %d\n", retval);
     return retval;
 }
-
-enum attr_index {
-    // RW
-    idx_pump_throttle,
-    idx_fan_throttle,
-    idx_pump_enable,
-    idx_fan_enable,
-
-    // RO
-    idx_pump_rpm,
-    idx_fan_rpm,
-    idx_liquid_temp,
-
-    // Validation
-    idx_max
-};
-
-static const char *attr_labels[] = {
-    // RW
-    [idx_pump_throttle] = "pump_pwm",
-    [idx_fan_throttle]  = "fan_pwm",
-    [idx_pump_enable]   = "pump_enable",
-    [idx_fan_enable]    = "fan_enable",
-
-    // RO
-    [idx_pump_rpm]      = "pump_rpm",
-    [idx_fan_rpm]       = "fan_rpm",
-    [idx_liquid_temp]   = "liquid_temp"
-};
-
-struct attr_range {
-    int min_value;
-    int max_value;
-};
-
-static const struct attr_range attr_ranges[] = {
-    [idx_pump_throttle] = { 0, 0xFF },
-    [idx_fan_throttle]  = { 0, 0xFF },
-    [idx_pump_enable]   = { 0, INT_MAX },
-    [idx_fan_enable]    = { 0, INT_MAX }
-};
 
 static ssize_t attr_label_show(
         struct device *dev, struct device_attribute *attr, char *buf)
@@ -264,13 +295,16 @@ static ssize_t attr_show(
     struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr);
 
     int value;
+    const char *message;
+
+    message = attr_labels[sensor_attr->index];
 
     switch (sensor_attr->index) {
-    case idx_pump_throttle:
+    case idx_pump_pwm:
         value = 0xFF * kraken->setpump_msg.pump_percent / 100;
         break;
 
-    case idx_fan_throttle:
+    case idx_fan_pwm:
         value = 0xFF * kraken->setfan_msg.fan_percent / 100;
         break;
 
@@ -298,6 +332,8 @@ static ssize_t attr_show(
         return -EINVAL;
     }
 
+    dev_dbg_ratelimited(dev, "Getting %s\n", message);
+
     return sprintf(buf, "%d\n", value);
 }
 
@@ -311,6 +347,8 @@ static ssize_t attr_store(
     struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr);
 
     const struct attr_range *range;
+    const char *message;
+    int new_value;
 
     long value = 0;
     char *end = NULL;
@@ -327,26 +365,41 @@ static ssize_t attr_store(
     if (unlikely(value < range->min_value || value > range->max_value))
         return -EINVAL;
 
+    message = attr_labels[sensor_attr->index];
+
     switch (sensor_attr->index) {
-    case idx_pump_throttle:
-        kraken->setpump_msg.pump_percent = value * 100 / 0xFF;
+    case idx_pump_pwm:
+        if (kraken->pump_enable != 1)
+            return -EPERM;
+
+        new_value = value * 100 / 0xFF;
+        kraken->setpump_msg.pump_percent = new_value;
         break;
 
-    case idx_fan_throttle:
-        kraken->setfan_msg.fan_percent = value * 100 / 0xFF;
+    case idx_fan_pwm:
+        if (kraken->fan_enable != 1)
+            return -EPERM;
+
+        new_value = value * 100 / 0xFF;
+        kraken->setfan_msg.fan_percent = new_value;
         break;
 
     case idx_pump_enable:
+        new_value = value;
         kraken->pump_enable = value;
         break;
 
     case idx_fan_enable:
+        new_value = value;
         kraken->fan_enable = value;
         break;
 
     default:
         return -EINVAL;
     }
+
+    if (new_value != value)
+        dev_dbg_ratelimited(dev, "Setting %s\n", message);
 
     return count;
 }
@@ -358,8 +411,8 @@ static umode_t kraken_is_visible(
 }
 
 // RW
-static SENSOR_DEVICE_ATTR_RW(pwm1, attr, idx_pump_throttle);
-static SENSOR_DEVICE_ATTR_RW(pwm2, attr, idx_fan_throttle);
+static SENSOR_DEVICE_ATTR_RW(pwm1, attr, idx_pump_pwm);
+static SENSOR_DEVICE_ATTR_RW(pwm2, attr, idx_fan_pwm);
 static SENSOR_DEVICE_ATTR_RW(pwm1_enable, attr, idx_pump_enable);
 static SENSOR_DEVICE_ATTR_RW(pwm2_enable, attr, idx_fan_enable);
 
@@ -369,8 +422,8 @@ static SENSOR_DEVICE_ATTR_RO(fan2_input, attr, idx_fan_rpm);
 static SENSOR_DEVICE_ATTR_RO(temp1_input, attr, idx_liquid_temp);
 
 // RW labels
-static SENSOR_DEVICE_ATTR_RO(pwm1_label, attr_label, idx_pump_throttle);
-static SENSOR_DEVICE_ATTR_RO(pwm2_label, attr_label, idx_fan_throttle);
+static SENSOR_DEVICE_ATTR_RO(pwm1_label, attr_label, idx_pump_pwm);
+static SENSOR_DEVICE_ATTR_RO(pwm2_label, attr_label, idx_fan_pwm);
 static SENSOR_DEVICE_ATTR_RO(pwm1_enable_label, attr_label, idx_pump_enable);
 static SENSOR_DEVICE_ATTR_RO(pwm2_enable_label, attr_label, idx_fan_enable);
 
@@ -411,11 +464,11 @@ static const struct attribute_group kraken_group = {
 };
 __ATTRIBUTE_GROUPS(kraken);
 
-static void kraken_add_device_files(struct usb_interface *interface)
+static int kraken_add_device_files(struct usb_interface *interface)
 {
     struct usb_kraken *dev = usb_get_intfdata(interface);
 
-    devm_hwmon_device_register_with_groups(
+    return NULL != devm_hwmon_device_register_with_groups(
                 &interface->dev, "kraken", dev, kraken_groups);
 }
 
@@ -449,8 +502,6 @@ static int kraken_probe(struct usb_interface *interface,
     dev = NULL;
     retval = -ENOMEM;
 
-    pr_info("Probing for NZXT X52 water cooler\n");
-
     dev = devm_kzalloc(&interface->dev, sizeof(*dev), GFP_KERNEL);
     if (!dev)
         goto error_dev;
@@ -458,6 +509,12 @@ static int kraken_probe(struct usb_interface *interface,
     // Default to automatic
     dev->pump_enable = 2;
     dev->fan_enable = 2;
+
+    // Default limits
+    dev->pump_min = 30;
+    dev->fan_min = 0;
+    dev->pump_max = 100;
+    dev->fan_max = 100;
 
     dev->setfan_msg.header[0] = 0x02;
     dev->setfan_msg.header[1] = 0x4d;
@@ -494,7 +551,9 @@ static int kraken_probe(struct usb_interface *interface,
         goto error;
     }
 
-    // Initialize polling timer
+    //
+    // Initialize polling timer driven work function
+
     hrtimer_init(&dev->update_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
     dev->update_timer.function = &update_timer_function;
@@ -503,8 +562,12 @@ static int kraken_probe(struct usb_interface *interface,
     dev->update_workqueue = create_singlethread_workqueue("kraken_up");
     INIT_WORK(&dev->update_work, update_work_function);
 
+    if (unlikely(!dev->update_workqueue))
+        goto error;
+
     // Initialize hwmon device
-    kraken_add_device_files(interface);
+    if (unlikely(!kraken_add_device_files(interface)))
+        goto error;
 
     dev_info(&interface->dev, "Kraken connected\n");
     return 0;

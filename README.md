@@ -4,104 +4,79 @@ This driver is a heavily rewritten fork based on
 [https://github.com/jaksi/leviathan](https://github.com/jaksi/leviathan).
 
 Linux device driver that supports controlling and monitoring
-NZXT Kraken water coolers
+NZXT Kraken water coolers.
 
 NZXT is **NOT** involved in this project, do **NOT** contact them if your
 device is damaged while using this software.
 
 Also, while it doesn't seem like the hardware could be damaged by silly USB
 messages (apart from overheating), I do **NOT** take any responsibility for
-any damage done to your cooler.
+any damage done.
 
-# Supported devices
+## Supported devices
 * NZXT Kraken X52 (Vendor/Product ID: `1e71:170e`)
-(Only for controlling the fan/pump speed, I did not bother with control of RGB)
+(Only for controlling the fan/pump speed, and monitoring the pump and fan rpm
+and liquid temperature. I did not bother with control of RGB)
 
-# Installation
-Make sure the headers for the kernel you are running are installed.
+## Build
+
 ```Shell
 make
-sudo insmod kraken.ko
+make update
 ```
 
-# Usage
-The driver can be controlled with device files under
-`/sys/bus/usb/drivers/kraken`.
+## Usage
+The driver implements the standard hwmon interface.
 
-Find the symbolic links that point to the connected compatible devices.
-
-In my case, there's only one Kraken connected:
-```Shell
-/sys/bus/usb/drivers/kraken/1-8:1.0
-```
-
-1-8:1.0 may vary depending on your mainboard and which connector is used.
-It is referred to as `DEVICE` below.
-
-# USB HID
-
-The usbhid driver may have seized control of the device. You may need to
-unbind it from usbhid and bind it to the kraken driver. To do this, you
-need to `echo DEVICE | sudo tee /sys/bus/usb/drivers/usbhid/unbind`, then
-`echo DEVICE | sudo tee /sys/bus/usb/drivers/kraken/bind`
-
-## Automatic control
-
-You can enable automatic control of the pump and fan based on the liquid
-temperature. It runs the pump and fan at 50% at 28C, and ramps up linearly
-to 85% at 39C. On my system, this holds the CPU temperature below 60C at
-full load, and ramps the fan and pump down to practically silent at idle.
-
-## Enabling automatic control
+You can find the correct hwmon index:
 
 ```Shell
-echo '1' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
+grep kraken /sys/class/hwmon/hwmon*/name
 ```
 
-## Disabling automatic control
+The numbered hwmon (for example, hwmon2) is should be used for the
+DEVICE placeholders below.
 
-```Shell
-echo '0' | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/auto_throttle
-```
+## USB HID
 
-## Reading the liquid temperature
+The USB HID driver may sieze control of the cooler, because the cooler
+is implemented as a "hiddev", which are non-human-interface
+human-interface-devices. You can't make this stuff up.
 
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/liquid_temp
-```
+## hwmon standard names
 
-## Reading the pump RPM
+| File        | Purpose                          | Access |
+|:------------|:---------------------------------|:------:|
+| pwm1        | Pump throttle                    |   RW   |
+| pwm2        | Fan throttle                     |   RW   |
+| pwm1_enable | 0=full, 1=manual, 2+=auto (Pump) |   RW   |
+| pwm2_enable | 0=full, 1=manual, 2+=auto (Fan)  |   RW   |
+| fan1_input  | Pump RPM                         |   RO   |
+| fan2_input  | Fan RPM                          |   RO   |
+| temp1_input | Liquid temperature               |   RO   |
+| name        | "kraken"                         |   RO   |
 
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/pump_rpm
-```
+### Automatic control
 
-## Reading the fan RPM
+The default behaviour is to have 2 in both _enable files, resulting in
+automatic speed control by default. If you want to override the automatic
+control, write 1 to the appropriate _enable file from the table above.
 
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/fan_rpm
-```
+### PWM
 
-## Reading the current pump throttle
+The values for the pwmN files are 0 to 255, corresponding to 0% to 100%.
 
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/pump_throttle
-```
+### RPM
 
-## Reading the current fan throttle
+The values for the fanN_input files are in RPM.
 
-```Shell
-cat /sys/bus/usb/drivers/kraken/DEVICE/fan_throttle
-```
+### Liquid temperature
 
-## Setting the pump throttle to 65%
+The temp1_input file is in 1/1000ths of a degree C (millicentigrade).
+For example, 30000 is 30C, 35000 is 35C.
 
-```Shell
-echo 65 | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/pump_throttle
-```
+### Labels
 
-## Setting the fan throttle to 65%
-
-```Shell
-echo 65 | sudo tee /sys/bus/usb/drivers/kraken/DEVICE/fan_throttle
-```
+Each file has a corresponding _label file from which you can read a
+reasonably human readable description of the purpose of the
+corresponding file.
