@@ -510,9 +510,9 @@ static int kraken_probe(struct usb_interface *interface,
     dev->pump_enable = 2;
     dev->fan_enable = 2;
 
-    // Default limits
+    // Default limits (the OEM software never send a percentage less than 30)
     dev->pump_min = 30;
-    dev->fan_min = 0;
+    dev->fan_min = 30;
     dev->pump_max = 100;
     dev->fan_max = 100;
 
