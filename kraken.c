@@ -38,13 +38,13 @@ MODULE_DEVICE_TABLE(usb, id_table);
 struct kraken_setfan {
     u8 header[4];       // 02 4d 00 00
     u8 fan_percent;
-    u8 zero[58];
+    u8 zero[59];
 };
 
 struct kraken_setpump {
     u8 header[4];       // 02 4d 40 00
     u8 pump_percent;
-    u8 zero[58];
+    u8 zero[59];
 };
 
 struct kraken_status {
