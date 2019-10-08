@@ -161,6 +161,11 @@ static const struct attr_range attr_ranges[] = {
     [idx_fan_enable]    = { 0, INT_MAX }
 };
 
+enum kraken_channel_idx {
+    kraken_channel_pump,
+    kraken_channel_fan
+};
+
 static int kraken_update(struct usb_kraken *kraken)
 {
     int retval = 0;
@@ -268,214 +273,284 @@ receive_failed:
     return retval;
 }
 
-static ssize_t attr_label_show(
-        struct device *dev, struct device_attribute *attr, char *buf)
-{
-    const struct sensor_device_attribute *sensor_attr =
-            to_sensor_dev_attr(attr);
-    (void)dev;
-
-    if (sensor_attr->index < idx_max)
-        return sprintf(buf, "%s\n", attr_labels[sensor_attr->index]);
-
-    return -EINVAL;
-}
-
 static u16 be16_bytes(const u8 *bytes)
 {
     return (bytes[0] << 8) | bytes[1];
 }
 
-static ssize_t attr_show(
-        struct device *dev, struct device_attribute *attr, char *buf)
-{
-    struct usb_interface *intf = to_usb_interface(dev);
-    struct usb_kraken *kraken = usb_get_intfdata(intf);
-
-    struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr);
-
-    int value;
-    const char *message;
-
-    message = attr_labels[sensor_attr->index];
-
-    switch (sensor_attr->index) {
-    case idx_pump_pwm:
-        value = 0xFF * kraken->setpump_msg.pump_percent / 100;
-        break;
-
-    case idx_fan_pwm:
-        value = 0xFF * kraken->setfan_msg.fan_percent / 100;
-        break;
-
-    case idx_pump_enable:
-        value = kraken->pump_enable;
-        break;
-
-    case idx_fan_enable:
-        value = kraken->fan_enable;
-        break;
-
-    case idx_pump_rpm:
-        value = be16_bytes(kraken->status_msg.pump_rpm);
-        break;
-
-    case idx_fan_rpm:
-        value = be16_bytes(kraken->status_msg.fan_rpm);
-        break;
-
-    case idx_liquid_temp:
-        value = kraken->status_msg.liquid_temp * 1000;
-        break;
-
-    default:
-        return -EINVAL;
-    }
-
-    dev_dbg_ratelimited(dev, "Getting %s\n", message);
-
-    return sprintf(buf, "%d\n", value);
-}
-
-static ssize_t attr_store(
-        struct device *dev, struct device_attribute *attr, const char *buf,
-        size_t count)
-{
-    struct usb_interface *intf = to_usb_interface(dev);
-    struct usb_kraken *kraken = usb_get_intfdata(intf);
-
-    struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr);
-
-    const struct attr_range *range;
-    const char *message;
-    int new_value;
-
-    long value = 0;
-    char *end = NULL;
-    value = simple_strtol(buf, &end, 10);
-    if (unlikely(!end))
-        return -EINVAL;
-
-    if (unlikely(sensor_attr->index < 0 || sensor_attr->index >=
-                 (sizeof(attr_ranges) / sizeof(*attr_ranges))))
-        return -EINVAL;
-
-    range = &attr_ranges[sensor_attr->index];
-
-    if (unlikely(value < range->min_value || value > range->max_value))
-        return -EINVAL;
-
-    message = attr_labels[sensor_attr->index];
-
-    switch (sensor_attr->index) {
-    case idx_pump_pwm:
-        if (kraken->pump_enable != 1)
-            return -EPERM;
-
-        new_value = value * 100 / 0xFF;
-        kraken->setpump_msg.pump_percent = new_value;
-        break;
-
-    case idx_fan_pwm:
-        if (kraken->fan_enable != 1)
-            return -EPERM;
-
-        new_value = value * 100 / 0xFF;
-        kraken->setfan_msg.fan_percent = new_value;
-        break;
-
-    case idx_pump_enable:
-        new_value = value;
-        kraken->pump_enable = value;
-        break;
-
-    case idx_fan_enable:
-        new_value = value;
-        kraken->fan_enable = value;
-        break;
-
-    default:
-        return -EINVAL;
-    }
-
-    if (new_value != value)
-        dev_dbg_ratelimited(dev, "Setting %s\n", message);
-
-    return count;
-}
-
 static umode_t kraken_is_visible(
-        struct kobject *kobj, struct attribute *attr, int index)
+        const void *drvdata, enum hwmon_sensor_types type,
+        u32 attr, int channel)
 {
-    return attr->mode;
+    switch (type) {
+    case hwmon_temp:
+        switch (attr) {
+        case hwmon_temp_input:
+        case hwmon_temp_label:
+            return 0444;
+
+        }
+        break;
+
+    case hwmon_pwm:
+        switch (attr) {
+        case hwmon_pwm_input:
+        case hwmon_pwm_enable:
+            return 0644;
+
+        }
+        break;
+
+    case hwmon_fan:
+        switch (attr) {
+        case hwmon_fan_input:
+        case hwmon_fan_label:
+            switch (channel) {
+            case kraken_channel_pump:
+            case kraken_channel_fan:
+                return 0444;
+
+            }
+            break;
+
+        }
+        break;
+
+    default:
+        return 0;
+
+    }
+
+    return 0;
 }
 
-// RW
-static SENSOR_DEVICE_ATTR_RW(pwm1, attr, idx_pump_pwm);
-static SENSOR_DEVICE_ATTR_RW(pwm2, attr, idx_fan_pwm);
-static SENSOR_DEVICE_ATTR_RW(pwm1_enable, attr, idx_pump_enable);
-static SENSOR_DEVICE_ATTR_RW(pwm2_enable, attr, idx_fan_enable);
+static int kraken_read_string(struct device *dev, enum hwmon_sensor_types type,
+                              u32 attr, int channel, const char **str)
+{
+    switch (type) {
+    case hwmon_temp:
+        switch (attr) {
+        case hwmon_temp_label:
+            *str = "liquid";
+            return 0;
+        }
+        break;
 
-// RO
-static SENSOR_DEVICE_ATTR_RO(fan1_input, attr, idx_pump_rpm);
-static SENSOR_DEVICE_ATTR_RO(fan2_input, attr, idx_fan_rpm);
-static SENSOR_DEVICE_ATTR_RO(temp1_input, attr, idx_liquid_temp);
+    case hwmon_fan:
+        switch (attr) {
+        case hwmon_fan_label:
+            switch (channel) {
+            case kraken_channel_pump:
+                *str = "pump";
+                return 0;
 
-// RW labels
-static SENSOR_DEVICE_ATTR_RO(pwm1_label, attr_label, idx_pump_pwm);
-static SENSOR_DEVICE_ATTR_RO(pwm2_label, attr_label, idx_fan_pwm);
-static SENSOR_DEVICE_ATTR_RO(pwm1_enable_label, attr_label, idx_pump_enable);
-static SENSOR_DEVICE_ATTR_RO(pwm2_enable_label, attr_label, idx_fan_enable);
+            case kraken_channel_fan:
+                *str = "fan";
+                return 0;
 
-// RO labels
-static SENSOR_DEVICE_ATTR_RO(fan1_label, attr_label, idx_pump_rpm);
-static SENSOR_DEVICE_ATTR_RO(fan2_label, attr_label, idx_fan_rpm);
-static SENSOR_DEVICE_ATTR_RO(temp1_label, attr_label, idx_liquid_temp);
+            }
+            break;
 
-static struct attribute *kraken_attrs[] = {
-    // RW
-    &sensor_dev_attr_pwm1.dev_attr.attr,
-    &sensor_dev_attr_pwm2.dev_attr.attr,
-    &sensor_dev_attr_pwm1_enable.dev_attr.attr,
-    &sensor_dev_attr_pwm2_enable.dev_attr.attr,
+        }
+        break;
 
-    // RO
-    &sensor_dev_attr_fan1_input.dev_attr.attr,
-    &sensor_dev_attr_fan2_input.dev_attr.attr,
-    &sensor_dev_attr_temp1_input.dev_attr.attr,
+    default:
+        return -ENOTSUPP;
 
-    // RW labels
-    &sensor_dev_attr_pwm1_label.dev_attr.attr,
-    &sensor_dev_attr_pwm2_label.dev_attr.attr,
-    &sensor_dev_attr_pwm1_enable_label.dev_attr.attr,
-    &sensor_dev_attr_pwm2_enable_label.dev_attr.attr,
+    }
 
-    // RO labels
-    &sensor_dev_attr_fan1_label.dev_attr.attr,
-    &sensor_dev_attr_fan2_label.dev_attr.attr,
-    &sensor_dev_attr_temp1_label.dev_attr.attr,
+    return -ENOTSUPP;
+}
 
+static int kraken_read(struct device *dev, enum hwmon_sensor_types type,
+                       u32 attr, int channel, long *val)
+{
+    struct usb_kraken *kraken = dev_get_drvdata(dev);
+
+    switch (type) {
+    case hwmon_temp:
+        dev_info(&kraken->udev->dev, "reading temp, attr=%d, channel=%d\n",
+                 attr, channel);
+        *val = kraken->status_msg.liquid_temp * 1000;
+        return 0;
+
+    case hwmon_pwm:
+        dev_info(&kraken->udev->dev, "reading pwm, attr=%d, channel=%d\n",
+                 attr, channel);
+
+        switch (channel) {
+        case kraken_channel_pump:
+            switch (attr) {
+            case hwmon_pwm_input:
+                *val = 255 * kraken->setpump_msg.pump_percent / 100;
+                return 0;
+
+            case hwmon_pwm_enable:
+                *val = kraken->pump_enable;
+                return 0;
+
+            }
+            break;
+
+        case kraken_channel_fan:
+            switch (attr) {
+            case hwmon_pwm_input:
+                *val = 255 * kraken->setfan_msg.fan_percent / 100;
+                return 0;
+
+            case hwmon_pwm_enable:
+                *val = kraken->fan_enable;
+                return 0;
+
+            }
+            break;
+
+        }
+        break;
+
+    case hwmon_fan:
+        dev_info(&kraken->udev->dev, "reading fan, attr=%d, channel=%d\n",
+                 attr, channel);
+
+        switch (channel) {
+        case kraken_channel_pump:
+            *val = be16_bytes(kraken->status_msg.pump_rpm);
+            return 0;
+
+        case kraken_channel_fan:
+            *val = be16_bytes(kraken->status_msg.fan_rpm);
+            return 0;
+        }
+        break;
+
+    default:
+        dev_info(&kraken->udev->dev, "reading unknown, attr=%d, channel=%d\n",
+                 attr, channel);
+        break;
+
+    }
+
+    return -ENOTSUPP;
+}
+
+static int kraken_write(struct device *dev, enum hwmon_sensor_types type,
+                       u32 attr, int channel, long val)
+{
+    struct usb_kraken *kraken = dev_get_drvdata(dev);
+
+    switch (type) {
+    case hwmon_pwm:
+        switch (channel) {
+        case kraken_channel_pump:
+            kraken->setpump_msg.pump_percent = 100 * val / 255;
+            return 0;
+
+        case kraken_channel_fan:
+            kraken->setfan_msg.fan_percent = 100 * val / 255;
+            return 0;
+
+        }
+        break;
+
+    default:
+        return -ENOTSUPP;
+
+    }
+
+    return -ENOTSUPP;
+}
+
+static const struct hwmon_ops kraken_chip_ops = {
+    .is_visible = kraken_is_visible,
+    .read_string = kraken_read_string,
+    .read = kraken_read,
+    .write = kraken_write
+};
+
+static const u32 kraken_chip_config[] = {
+    HWMON_C_REGISTER_TZ | HWMON_C_UPDATE_INTERVAL,
+    0
+};
+
+static const u32 kraken_temp_config[] = {
+    HWMON_T_INPUT | HWMON_T_LABEL,
+    0
+};
+
+static const u32 kraken_pwm_config[] = {
+    [kraken_channel_pump] = HWMON_PWM_INPUT | HWMON_PWM_ENABLE,
+    [kraken_channel_fan]  = HWMON_PWM_INPUT | HWMON_PWM_ENABLE,
+    0
+};
+
+static const u32 kraken_fan_config[] = {
+    [kraken_channel_pump] = HWMON_F_INPUT | HWMON_F_LABEL,
+    [kraken_channel_fan]  = HWMON_F_INPUT | HWMON_F_LABEL,
+    0
+};
+
+static const struct hwmon_channel_info kraken_chip = {
+    .type = hwmon_chip,
+    .config = kraken_chip_config
+};
+
+static const struct hwmon_channel_info kraken_temp = {
+    .type = hwmon_temp,
+    .config = kraken_temp_config
+};
+
+static const struct hwmon_channel_info kraken_pwm = {
+    .type = hwmon_pwm,
+    .config = kraken_pwm_config
+};
+
+static const struct hwmon_channel_info kraken_fan = {
+    .type = hwmon_fan,
+    .config = kraken_fan_config
+};
+
+static const struct hwmon_channel_info *kraken_channels[] = {
+    &kraken_temp,
+    &kraken_pwm,
+    &kraken_fan,
     NULL
 };
 
-static const struct attribute_group kraken_group = {
-    .attrs = kraken_attrs,
-    .is_visible = kraken_is_visible,
+static const struct hwmon_chip_info kraken_chip_info = {
+    .ops = &kraken_chip_ops,
+    .info = kraken_channels
 };
-__ATTRIBUTE_GROUPS(kraken);
+
+static ssize_t show_device_name(struct device *dev,
+                            struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%s\n", "kraken-hid-0000");
+}
+
+static DEVICE_ATTR(name, S_IRUGO, show_device_name, NULL);
 
 static int kraken_add_device_files(struct usb_interface *interface)
 {
     struct usb_kraken *dev = usb_get_intfdata(interface);
 
-    return NULL != devm_hwmon_device_register_with_groups(
-                &interface->dev, "kraken", dev, kraken_groups);
+    int retval;
+
+    retval = device_create_file(&interface->dev, &dev_attr_name);
+
+    if (retval < 0)
+        return retval;
+
+    devm_hwmon_device_register_with_info(
+                &interface->dev, "kraken", dev,
+                &kraken_chip_info, NULL);
+
+    return retval;
 }
 
 static enum hrtimer_restart update_timer_function(struct hrtimer *update_timer)
 {
-    struct usb_kraken *dev = container_of(update_timer,
-                                          struct usb_kraken, update_timer);
+    struct usb_kraken *dev = container_of(
+                update_timer, struct usb_kraken, update_timer);
     queue_work(dev->update_workqueue, &dev->update_work);
     hrtimer_forward(update_timer, ktime_get(), ktime_set(1, 0));
     return HRTIMER_RESTART;
@@ -566,7 +641,7 @@ static int kraken_probe(struct usb_interface *interface,
         goto error;
 
     // Initialize hwmon device
-    if (unlikely(!kraken_add_device_files(interface)))
+    if (unlikely((retval = kraken_add_device_files(interface)) < 0))
         goto error;
 
     dev_info(&interface->dev, "Kraken connected\n");
