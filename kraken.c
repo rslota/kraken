@@ -59,6 +59,7 @@ struct kraken_status {
 struct usb_kraken {
     struct usb_device *udev;
     struct usb_interface *interface;
+    struct device *hmon_dev;
 
     struct hrtimer update_timer;
     struct workqueue_struct *update_workqueue;
@@ -521,33 +522,49 @@ static const struct hwmon_chip_info kraken_chip_info = {
     .info = kraken_channels
 };
 
-static ssize_t show_device_name(struct device *dev,
-                            struct device_attribute *attr, char *buf)
+static ssize_t show_device_name(
+        struct device *dev, struct device_attribute *attr, char *buf)
 {
     return sprintf(buf, "%s\n", "kraken-hid-0000");
 }
 
 static DEVICE_ATTR(name, S_IRUGO, show_device_name, NULL);
 
+void kraken_remove_device_files(void *arg)
+{
+    struct usb_interface *interface = arg;
+
+    device_remove_file(&interface->dev, &dev_attr_name);
+}
+
 static int kraken_add_device_files(struct usb_interface *interface)
 {
     struct usb_kraken *dev = usb_get_intfdata(interface);
 
-    int retval;
+    int retval = 0;
 
     retval = device_create_file(&interface->dev, &dev_attr_name);
 
     if (retval < 0)
         return retval;
 
-    devm_hwmon_device_register_with_info(
+    retval = devm_add_action_or_reset(&interface->dev,
+                             kraken_remove_device_files, interface);
+
+    if (unlikely(retval < 0))
+        return retval;
+
+    dev->hmon_dev = devm_hwmon_device_register_with_info(
                 &interface->dev, "kraken", dev,
                 &kraken_chip_info, NULL);
+
+    if (IS_ERR(dev->hmon_dev))
+        retval = PTR_ERR(dev->hmon_dev);
 
     return retval;
 }
 
-static enum hrtimer_restart update_timer_function(struct hrtimer *update_timer)
+static enum hrtimer_restart kraken_update_timer(struct hrtimer *update_timer)
 {
     struct usb_kraken *dev = container_of(
                 update_timer, struct usb_kraken, update_timer);
@@ -556,11 +573,18 @@ static enum hrtimer_restart update_timer_function(struct hrtimer *update_timer)
     return HRTIMER_RESTART;
 }
 
-static void update_work_function(struct work_struct *param)
+static void kraken_update_work(struct work_struct *param)
 {
     struct usb_kraken *dev = container_of(
                 param, struct usb_kraken, update_work);
     kraken_update(dev);
+}
+
+void kraken_cleanup_timer(struct usb_kraken *dev)
+{
+    flush_workqueue(dev->update_workqueue);
+    destroy_workqueue(dev->update_workqueue);
+    hrtimer_cancel(&dev->update_timer);
 }
 
 static int kraken_probe(struct usb_interface *interface,
@@ -578,7 +602,7 @@ static int kraken_probe(struct usb_interface *interface,
     retval = -ENOMEM;
 
     dev = devm_kzalloc(&interface->dev, sizeof(*dev), GFP_KERNEL);
-    if (!dev)
+    if (unlikely(!dev))
         goto error_dev;
 
     // Default to automatic
@@ -631,21 +655,27 @@ static int kraken_probe(struct usb_interface *interface,
 
     hrtimer_init(&dev->update_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
-    dev->update_timer.function = &update_timer_function;
-    hrtimer_start(&dev->update_timer, ktime_set(1, 0), HRTIMER_MODE_REL);
+    dev->update_timer.function = kraken_update_timer;
+    hrtimer_start(&dev->update_timer,
+                  ktime_set(0, 500000000), HRTIMER_MODE_REL);
 
     dev->update_workqueue = create_singlethread_workqueue("kraken_up");
-    INIT_WORK(&dev->update_work, update_work_function);
+    INIT_WORK(&dev->update_work, kraken_update_work);
 
     if (unlikely(!dev->update_workqueue))
-        goto error;
+        goto error_work_queue;
 
     // Initialize hwmon device
     if (unlikely((retval = kraken_add_device_files(interface)) < 0))
-        goto error;
+        goto error_device_files;
 
     dev_info(&interface->dev, "Kraken connected\n");
     return 0;
+
+error_device_files:
+    kraken_cleanup_timer(dev);
+
+error_work_queue:
 
 error:
     usb_set_intfdata(interface, NULL);
@@ -662,9 +692,7 @@ static void kraken_disconnect(struct usb_interface *interface)
     usb_set_intfdata(interface, NULL);
     usb_put_dev(dev->udev);
 
-    flush_workqueue(dev->update_workqueue);
-    destroy_workqueue(dev->update_workqueue);
-    hrtimer_cancel(&dev->update_timer);
+    kraken_cleanup_timer(dev);
 
     dev_info(&interface->dev, "Kraken disconnected\n");
 }
