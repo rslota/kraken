@@ -56,6 +56,13 @@ struct kraken_status {
     u8 unknown_2[10];   // 00 00 00 3f 02 00 01 08 1e 00
 };
 
+struct kraken_autopoint {
+    int pwm;
+    int temp;
+};
+
+#define KRAKEN_CURVE_POINTS 3
+
 struct usb_kraken {
     struct usb_device *udev;
     struct usb_interface *interface;
@@ -72,6 +79,12 @@ struct usb_kraken {
     // 0=full speed, 1=manual override, 2=automatic
     int pump_enable;
     int fan_enable;
+
+    // Pump curve
+    struct kraken_autopoint pump_curve[KRAKEN_CURVE_POINTS];
+
+    // Fan curve
+    struct kraken_autopoint fan_curve[KRAKEN_CURVE_POINTS];
 
     // Limits
     int pump_min;
@@ -122,15 +135,21 @@ static int kraken_receive_message(struct usb_kraken *kraken,
 }
 
 enum attr_index {
+    //
     // RW
+
     idx_pump_pwm,
     idx_fan_pwm,
+
     idx_pump_enable,
     idx_fan_enable,
 
+    //
     // RO
+
     idx_pump_rpm,
     idx_fan_rpm,
+
     idx_liquid_temp,
 
     // Validation
@@ -167,6 +186,48 @@ enum kraken_channel_idx {
     kraken_channel_fan
 };
 
+static int kraken_interpolate(
+        struct usb_kraken *kraken, struct kraken_autopoint *curve)
+{
+    size_t i;
+    int min_lt, max_lt, rng_lt, ofs_lt;
+    int min_pt, max_pt, rng_pt, pt;
+
+    const int temp = kraken->status_msg.liquid_temp;
+
+    // If temp is out of curve range, lower than first point
+    if (unlikely(curve[0].temp >= temp))
+        return curve[1].pwm;
+
+    // If temp is out of curve range, higher than last point
+    if (unlikely(curve[KRAKEN_CURVE_POINTS - 1].temp <= temp))
+        return curve[KRAKEN_CURVE_POINTS - 1].pwm;
+
+    for (i = 1; i < KRAKEN_CURVE_POINTS; ++i) {
+        if (likely(temp <= curve[i].temp))
+            break;
+    }
+
+    // The range of the liquid temperature that
+    // corresponds to minimum and maximum cooling
+    min_lt = curve[i - 1].temp;
+    max_lt = curve[i].temp;
+    rng_lt = max_lt - min_lt;
+
+    // Temperature offset from beginning of curve temperature range
+    ofs_lt = temp - min_lt;
+
+    // The pwm throttle range
+    min_pt = curve[i - 1].pwm;
+    max_pt = curve[i].pwm;
+    rng_pt = max_pt - min_pt;
+
+    // Interpolate pwm throttle
+    pt = ((ofs_lt * rng_pt) / rng_lt) + min_pt;
+
+    return pt;
+}
+
 static int kraken_update(struct usb_kraken *kraken)
 {
     int retval = 0;
@@ -177,64 +238,23 @@ static int kraken_update(struct usb_kraken *kraken)
     if (kraken->fan_enable == 0)
         kraken->setfan_msg.fan_percent = 100;
 
-    if (kraken->pump_enable >= 2 || kraken->fan_enable >= 2) {
-        // The range of the liquid temperature that
-        // corresponds to minimum and maximum cooling
-        const int min_lt = 29;
-        const int max_lt = 35;
-        const int rng_lt = max_lt - min_lt;
+    if (kraken->pump_enable >= 2) {
+        int pt = kraken_interpolate(kraken, kraken->pump_curve);
 
-        int ofs_lt = kraken->status_msg.liquid_temp - min_lt;
+        dev_info_ratelimited(&kraken->udev->dev,
+                             "Auto adjusted %s to %d%%\n",
+                             attr_labels[idx_pump_pwm], pt);
 
-        // Out of range values linearly extrapolate
+        kraken->setpump_msg.pump_percent = pt;
+    }
 
-        if (kraken->pump_enable >= 2) {
-            // Automatic pump speed
+    if (kraken->fan_enable >= 2) {
+        int ft = kraken_interpolate(kraken, kraken->fan_curve);
+        kraken->setfan_msg.fan_percent = ft;
 
-            // The pump throttle range
-            // When liquid temp is min_lt, set pump throttle to 45%
-            // When liquid temp is max_lt, set pump throttle to 85%
-            const int min_pt = 45;
-            const int max_pt = 85;
-            const int rng_pt = max_pt - min_pt;
-
-            int pt = ((ofs_lt * rng_pt) / rng_lt) + min_pt;
-
-            if (pt < kraken->pump_min)
-                pt = kraken->pump_min;
-            if (pt > kraken->pump_max)
-                pt = kraken->pump_max;
-
-            dev_dbg_ratelimited(&kraken->udev->dev,
-                                 "Auto adjusted %s to %d%%\n",
-                                 attr_labels[idx_pump_pwm], pt);
-
-            kraken->setpump_msg.pump_percent = pt;
-        }
-
-        if (kraken->fan_enable >= 2) {
-            // Automatic fan speed
-
-            // The fan throttle range
-            // When liquid temp is min_lt, set fan throttle to 25%
-            // When liquid temp is max_lt, set fan throttle to 100%
-            const int min_ft = 33;
-            const int max_ft = 100;
-            const int rng_ft = max_ft - min_ft;
-
-            int ft = ((ofs_lt * rng_ft) / rng_lt) + min_ft;
-
-            if (ft < kraken->fan_min)
-                ft = kraken->fan_min;
-            if (ft > kraken->fan_max)
-                ft = kraken->fan_max;
-
-            kraken->setfan_msg.fan_percent = ft;
-
-            dev_dbg_ratelimited(&kraken->udev->dev,
-                                "Auto adjusted %s to %d%%\n",
-                                attr_labels[idx_fan_pwm], ft);
-        }
+        dev_info_ratelimited(&kraken->udev->dev,
+                            "Auto adjusted %s to %d%%\n",
+                            attr_labels[idx_fan_pwm], ft);
     }
 
     dev_dbg_ratelimited(&kraken->udev->dev, "Writing %d%% to pump hardware",
@@ -525,7 +545,7 @@ static const struct hwmon_chip_info kraken_chip_info = {
 static ssize_t show_device_name(
         struct device *dev, struct device_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%s\n", "kraken-hid-0000");
+    return sprintf(buf, "%s\n", "kraken");
 }
 
 static DEVICE_ATTR(name, S_IRUGO, show_device_name, NULL);
@@ -536,6 +556,222 @@ void kraken_remove_device_files(void *arg)
 
     device_remove_file(&interface->dev, &dev_attr_name);
 }
+
+// Pack two values into sensor_2 nr
+#define KRAKEN_AUTOPOINT_DIM_PWM    0x10
+#define KRAKEN_AUTOPOINT_DIM_TEMP   0x20
+#define KRAKEN_AUTOPOINT_PWM_INDEX(nr) (KRAKEN_AUTOPOINT_DIM_PWM | (nr))
+#define KRAKEN_AUTOPOINT_TEMP_INDEX(nr) (KRAKEN_AUTOPOINT_DIM_TEMP | (nr))
+#define KRAKEN_AUTOPOINT_DIM(nr) ((nr) & 0xF0)
+#define KRAKEN_AUTOPOINT_POINT(nr) ((nr) & 0x0F)
+
+static ssize_t kraken_autopoint_fn_show(
+        struct device *dev, struct device_attribute *attr, char *buf)
+{
+    struct usb_interface *intf = to_usb_interface(dev);
+    struct usb_kraken *kraken = usb_get_intfdata(intf);
+
+    struct sensor_device_attribute_2 *sensor_attr = to_sensor_dev_attr_2(attr);
+
+    int value = 0;
+
+    size_t point = KRAKEN_AUTOPOINT_POINT(sensor_attr->nr);
+
+    if (unlikely(point >= KRAKEN_CURVE_POINTS))
+        return -EINVAL;
+
+    switch (KRAKEN_AUTOPOINT_DIM(sensor_attr->nr)) {
+    case KRAKEN_AUTOPOINT_DIM_PWM:
+        switch (sensor_attr->index) {
+        case kraken_channel_pump:
+            value = 0xFF * kraken->pump_curve[point].pwm / 100;
+            break;
+
+        case kraken_channel_fan:
+            value = 0xFF * kraken->fan_curve[point].pwm / 100;
+            break;
+
+        default:
+            return -EINVAL;
+
+        }
+        break;
+
+    case KRAKEN_AUTOPOINT_DIM_TEMP:
+        switch (sensor_attr->index) {
+        case kraken_channel_pump:
+            value = 1000 * kraken->pump_curve[point].temp;
+            break;
+
+        case kraken_channel_fan:
+            value = 1000 * kraken->fan_curve[point].temp;
+            break;
+
+        default:
+            return -EINVAL;
+
+        }
+        break;
+
+    }
+
+    return sprintf(buf, "%d\n", value);
+}
+
+static ssize_t kraken_autopoint_fn_store(
+        struct device *dev, struct device_attribute *attr, const char *buf,
+        size_t count)
+{
+    struct usb_interface *intf = to_usb_interface(dev);
+    struct usb_kraken *kraken = usb_get_intfdata(intf);
+
+    struct sensor_device_attribute_2 *sensor_attr = to_sensor_dev_attr_2(attr);
+
+    size_t point = KRAKEN_AUTOPOINT_POINT(sensor_attr->nr);
+
+    char *end = NULL;
+    long value = simple_strtol(buf, &end, 10);
+    if (unlikely(!end))
+        return -EINVAL;
+
+    if (unlikely(point >= KRAKEN_CURVE_POINTS))
+        return -EINVAL;
+
+    switch (KRAKEN_AUTOPOINT_DIM(sensor_attr->nr)) {
+    case KRAKEN_AUTOPOINT_DIM_PWM:
+        if (unlikely(value < 0 || value > 0xFF))
+            return -EINVAL;
+
+        // Map 0-to-0xFF to 0-to-100
+        value = (value * 100) / 0xFF;
+
+        switch (sensor_attr->index) {
+        case kraken_channel_pump:
+            kraken->pump_curve[point].pwm = value;
+            break;
+
+        case kraken_channel_fan:
+            kraken->fan_curve[point].pwm = value;
+            break;
+
+        default:
+            return -EINVAL;
+
+        }
+        break;
+
+    case KRAKEN_AUTOPOINT_DIM_TEMP:
+        if (unlikely(value < 0 || value > 255000))
+            return -EINVAL;
+
+        // Convert millidegrees to degrees
+        value /= 1000;
+
+        switch (sensor_attr->index) {
+        case kraken_channel_pump:
+            kraken->pump_curve[point].temp = value;
+            break;
+
+        case kraken_channel_fan:
+            kraken->fan_curve[point].temp = value;
+            break;
+
+        default:
+            return -EINVAL;
+
+        }
+        break;
+
+    }
+
+    // Success
+    return count;
+}
+
+// Pump curve PWM points
+
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint1_pwm, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(0));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint2_pwm, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(1));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint3_pwm, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(2));
+
+// Pump curve temperature points
+
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint1_temp, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(0));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint2_temp, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(1));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm1_autopoint3_temp, kraken_autopoint_fn,
+        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(2));
+
+// Fan curve PWM points
+
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint1_pwm, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(0));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint2_pwm, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(1));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint3_pwm, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(2));
+
+// Fan curve temperature points
+
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint1_temp, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(0));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint2_temp, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(1));
+static SENSOR_DEVICE_ATTR_2_RW(
+        pwm2_autopoint3_temp, kraken_autopoint_fn,
+        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(2));
+
+static umode_t kraken_extra_is_visible(
+        struct kobject *kobj, struct attribute *attr, int index)
+{
+    return attr->mode;
+}
+
+static struct attribute *kraken_extra_attrs[] = {
+    // RW
+    &sensor_dev_attr_pwm1_autopoint1_pwm.dev_attr.attr,
+    &sensor_dev_attr_pwm1_autopoint2_pwm.dev_attr.attr,
+    &sensor_dev_attr_pwm1_autopoint3_pwm.dev_attr.attr,
+
+    &sensor_dev_attr_pwm1_autopoint1_temp.dev_attr.attr,
+    &sensor_dev_attr_pwm1_autopoint2_temp.dev_attr.attr,
+    &sensor_dev_attr_pwm1_autopoint3_temp.dev_attr.attr,
+
+    &sensor_dev_attr_pwm2_autopoint1_pwm.dev_attr.attr,
+    &sensor_dev_attr_pwm2_autopoint2_pwm.dev_attr.attr,
+    &sensor_dev_attr_pwm2_autopoint3_pwm.dev_attr.attr,
+
+    &sensor_dev_attr_pwm2_autopoint1_temp.dev_attr.attr,
+    &sensor_dev_attr_pwm2_autopoint2_temp.dev_attr.attr,
+    &sensor_dev_attr_pwm2_autopoint3_temp.dev_attr.attr,
+
+    NULL
+};
+
+static struct attribute_group kraken_extra_group = {
+    .attrs = kraken_extra_attrs,
+    .is_visible = kraken_extra_is_visible
+};
+
+static const struct attribute_group *kraken_extra_groups[] = {
+    &kraken_extra_group,
+    NULL
+};
 
 static int kraken_add_device_files(struct usb_interface *interface)
 {
@@ -556,7 +792,7 @@ static int kraken_add_device_files(struct usb_interface *interface)
 
     dev->hmon_dev = devm_hwmon_device_register_with_info(
                 &interface->dev, "kraken", dev,
-                &kraken_chip_info, NULL);
+                &kraken_chip_info, kraken_extra_groups);
 
     if (IS_ERR(dev->hmon_dev))
         retval = PTR_ERR(dev->hmon_dev);
@@ -615,6 +851,22 @@ static int kraken_probe(struct usb_interface *interface,
     dev->pump_max = 100;
     dev->fan_max = 100;
 
+    // Default pump curve (30% @ 27C, 60% @ 33C, 100% @ 36C)
+    dev->pump_curve[0].pwm = 30;
+    dev->pump_curve[0].temp = 30;
+    dev->pump_curve[1].pwm = 60;
+    dev->pump_curve[1].temp = 33;
+    dev->pump_curve[2].pwm = 100;
+    dev->pump_curve[2].temp = 36;
+
+    // Default fan curve (30% @ 30C, 90% @ 33C, 100% @ 36C)
+    dev->fan_curve[0].pwm = 30;
+    dev->fan_curve[0].temp = 30;
+    dev->fan_curve[1].pwm = 90;
+    dev->fan_curve[1].temp = 33;
+    dev->fan_curve[2].pwm = 100;
+    dev->fan_curve[2].temp = 36;
+
     dev->setfan_msg.header[0] = 0x02;
     dev->setfan_msg.header[1] = 0x4d;
     dev->setfan_msg.header[2] = 0x00;
@@ -670,7 +922,10 @@ static int kraken_probe(struct usb_interface *interface,
         goto error_device_files;
 
     dev_info(&interface->dev, "Kraken connected\n");
+
+    // Success
     return 0;
+
 
 error_device_files:
     kraken_cleanup_timer(dev);
