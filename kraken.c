@@ -241,9 +241,9 @@ static int kraken_update(struct usb_kraken *kraken)
     if (kraken->pump_enable >= 2) {
         int pt = kraken_interpolate(kraken, kraken->pump_curve);
 
-        dev_info_ratelimited(&kraken->udev->dev,
-                             "Auto adjusted %s to %d%%\n",
-                             attr_labels[idx_pump_pwm], pt);
+        dev_dbg_ratelimited(&kraken->udev->dev,
+                            "Auto adjusted %s to %d%%\n",
+                            attr_labels[idx_pump_pwm], pt);
 
         kraken->setpump_msg.pump_percent = pt;
     }
@@ -252,7 +252,7 @@ static int kraken_update(struct usb_kraken *kraken)
         int ft = kraken_interpolate(kraken, kraken->fan_curve);
         kraken->setfan_msg.fan_percent = ft;
 
-        dev_info_ratelimited(&kraken->udev->dev,
+        dev_dbg_ratelimited(&kraken->udev->dev,
                             "Auto adjusted %s to %d%%\n",
                             attr_labels[idx_fan_pwm], ft);
     }
@@ -390,14 +390,14 @@ static int kraken_read(struct device *dev, enum hwmon_sensor_types type,
 
     switch (type) {
     case hwmon_temp:
-        dev_info(&kraken->udev->dev, "reading temp, attr=%d, channel=%d\n",
-                 attr, channel);
+        dev_dbg(&kraken->udev->dev, "reading temp, attr=%d, channel=%d\n",
+                attr, channel);
         *val = kraken->status_msg.liquid_temp * 1000;
         return 0;
 
     case hwmon_pwm:
-        dev_info(&kraken->udev->dev, "reading pwm, attr=%d, channel=%d\n",
-                 attr, channel);
+        dev_dbg(&kraken->udev->dev, "reading pwm, attr=%d, channel=%d\n",
+                attr, channel);
 
         switch (channel) {
         case kraken_channel_pump:
@@ -430,8 +430,8 @@ static int kraken_read(struct device *dev, enum hwmon_sensor_types type,
         break;
 
     case hwmon_fan:
-        dev_info(&kraken->udev->dev, "reading fan, attr=%d, channel=%d\n",
-                 attr, channel);
+        dev_dbg(&kraken->udev->dev, "reading fan, attr=%d, channel=%d\n",
+                attr, channel);
 
         switch (channel) {
         case kraken_channel_pump:
@@ -445,8 +445,8 @@ static int kraken_read(struct device *dev, enum hwmon_sensor_types type,
         break;
 
     default:
-        dev_info(&kraken->udev->dev, "reading unknown, attr=%d, channel=%d\n",
-                 attr, channel);
+        dev_dbg(&kraken->udev->dev, "reading unknown, attr=%d, channel=%d\n",
+                attr, channel);
         break;
 
     }
