@@ -459,15 +459,38 @@ static int kraken_write(struct device *dev, enum hwmon_sensor_types type,
 {
     struct usb_kraken *kraken = dev_get_drvdata(dev);
 
+    dev_info(&kraken->udev->dev,
+             "kraken_write(dev, type=%#x, attr=%#x, channel=%#x, val=%#lx\n",
+             (int)type, attr, channel, val);
+
     switch (type) {
     case hwmon_pwm:
-        switch (channel) {
-        case kraken_channel_pump:
-            kraken->setpump_msg.pump_percent = 100 * val / 255;
+        switch (attr) {
+        case hwmon_pwm_enable:
+            if (unlikely(val < 0 || val > 2))
+                return -EINVAL;
+
+            switch (channel) {
+            case kraken_channel_pump:
+                kraken->pump_enable = val;
+                break;
+            case kraken_channel_fan:
+                kraken->fan_enable = val;
+                break;
+            }
             return 0;
 
-        case kraken_channel_fan:
-            kraken->setfan_msg.fan_percent = 100 * val / 255;
+        case hwmon_pwm_input:
+            switch (channel) {
+            case kraken_channel_pump:
+                kraken->setpump_msg.pump_percent = 100 * val / 255;
+                return 0;
+
+            case kraken_channel_fan:
+                kraken->setfan_msg.fan_percent = 100 * val / 255;
+                return 0;
+
+            }
             return 0;
 
         }
@@ -584,11 +607,11 @@ static ssize_t kraken_autopoint_fn_show(
     case KRAKEN_AUTOPOINT_DIM_PWM:
         switch (sensor_attr->index) {
         case kraken_channel_pump:
-            value = 0xFF * kraken->pump_curve[point].pwm / 100;
+            value = (0xFF * kraken->pump_curve[point].pwm) / 100;
             break;
 
         case kraken_channel_fan:
-            value = 0xFF * kraken->fan_curve[point].pwm / 100;
+            value = (0xFF * kraken->fan_curve[point].pwm) / 100;
             break;
 
         default:
@@ -613,6 +636,9 @@ static ssize_t kraken_autopoint_fn_show(
         }
         break;
 
+    default:
+        return -EINVAL;
+
     }
 
     return sprintf(buf, "%d\n", value);
@@ -629,12 +655,12 @@ static ssize_t kraken_autopoint_fn_store(
 
     size_t point = KRAKEN_AUTOPOINT_POINT(sensor_attr->nr);
 
+    if (unlikely(point >= KRAKEN_CURVE_POINTS))
+        return -EINVAL;
+
     char *end = NULL;
     long value = simple_strtol(buf, &end, 10);
     if (unlikely(!end))
-        return -EINVAL;
-
-    if (unlikely(point >= KRAKEN_CURVE_POINTS))
         return -EINVAL;
 
     switch (KRAKEN_AUTOPOINT_DIM(sensor_attr->nr)) {
@@ -692,49 +718,49 @@ static ssize_t kraken_autopoint_fn_store(
 
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint1_pwm, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(0));
+        KRAKEN_AUTOPOINT_PWM_INDEX(0), kraken_channel_pump);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint2_pwm, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(1));
+        KRAKEN_AUTOPOINT_PWM_INDEX(1), kraken_channel_pump);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint3_pwm, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_PWM_INDEX(2));
+        KRAKEN_AUTOPOINT_PWM_INDEX(2), kraken_channel_pump);
 
 // Pump curve temperature points
 
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint1_temp, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(0));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(0), kraken_channel_pump);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint2_temp, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(1));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(1), kraken_channel_pump);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm1_autopoint3_temp, kraken_autopoint_fn,
-        kraken_channel_pump, KRAKEN_AUTOPOINT_TEMP_INDEX(2));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(2), kraken_channel_pump);
 
 // Fan curve PWM points
 
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint1_pwm, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(0));
+        KRAKEN_AUTOPOINT_PWM_INDEX(0), kraken_channel_fan);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint2_pwm, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(1));
+        KRAKEN_AUTOPOINT_PWM_INDEX(1), kraken_channel_fan);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint3_pwm, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_PWM_INDEX(2));
+        KRAKEN_AUTOPOINT_PWM_INDEX(2), kraken_channel_fan);
 
 // Fan curve temperature points
 
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint1_temp, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(0));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(0), kraken_channel_fan);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint2_temp, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(1));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(1), kraken_channel_fan);
 static SENSOR_DEVICE_ATTR_2_RW(
         pwm2_autopoint3_temp, kraken_autopoint_fn,
-        kraken_channel_fan, KRAKEN_AUTOPOINT_TEMP_INDEX(2));
+        KRAKEN_AUTOPOINT_TEMP_INDEX(2), kraken_channel_fan);
 
 static umode_t kraken_extra_is_visible(
         struct kobject *kobj, struct attribute *attr, int index)
@@ -852,18 +878,18 @@ static int kraken_probe(struct usb_interface *interface,
     dev->fan_max = 100;
 
     // Default pump curve (30% @ 27C, 60% @ 33C, 100% @ 36C)
-    dev->pump_curve[0].pwm = 30;
+    dev->pump_curve[0].pwm = 60;
     dev->pump_curve[0].temp = 30;
-    dev->pump_curve[1].pwm = 60;
-    dev->pump_curve[1].temp = 33;
+    dev->pump_curve[1].pwm = 80;
+    dev->pump_curve[1].temp = 32;
     dev->pump_curve[2].pwm = 100;
-    dev->pump_curve[2].temp = 36;
+    dev->pump_curve[2].temp = 34;
 
     // Default fan curve (30% @ 30C, 90% @ 33C, 100% @ 36C)
-    dev->fan_curve[0].pwm = 30;
+    dev->fan_curve[0].pwm = 50;
     dev->fan_curve[0].temp = 30;
-    dev->fan_curve[1].pwm = 90;
-    dev->fan_curve[1].temp = 33;
+    dev->fan_curve[1].pwm = 75;
+    dev->fan_curve[1].temp = 32;
     dev->fan_curve[2].pwm = 100;
     dev->fan_curve[2].temp = 36;
 
