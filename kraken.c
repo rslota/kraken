@@ -61,7 +61,7 @@ struct kraken_autopoint {
     int temp;
 };
 
-#define KRAKEN_CURVE_POINTS 3
+#define KRAKEN_CURVE_POINTS 4
 
 struct usb_kraken {
     struct usb_device *udev;
@@ -197,7 +197,7 @@ static int kraken_interpolate(
 
     // If temp is out of curve range, lower than first point
     if (unlikely(curve[0].temp >= temp))
-        return curve[1].pwm;
+        return curve[0].pwm;
 
     // If temp is out of curve range, higher than last point
     if (unlikely(curve[KRAKEN_CURVE_POINTS - 1].temp <= temp))
@@ -877,21 +877,25 @@ static int kraken_probe(struct usb_interface *interface,
     dev->pump_max = 100;
     dev->fan_max = 100;
 
-    // Default pump curve (30% @ 27C, 60% @ 33C, 100% @ 36C)
+    // Default pump curve (60% @ 30C, 70% @ 34C, 80% @ 38C, 100% @ 45)
     dev->pump_curve[0].pwm = 60;
     dev->pump_curve[0].temp = 30;
-    dev->pump_curve[1].pwm = 80;
-    dev->pump_curve[1].temp = 32;
-    dev->pump_curve[2].pwm = 100;
-    dev->pump_curve[2].temp = 34;
+    dev->pump_curve[1].pwm = 70;
+    dev->pump_curve[1].temp = 34;
+    dev->pump_curve[2].pwm = 80;
+    dev->pump_curve[2].temp = 38;
+    dev->pump_curve[3].pwm = 100;
+    dev->pump_curve[3].temp = 45;
 
-    // Default fan curve (30% @ 30C, 90% @ 33C, 100% @ 36C)
-    dev->fan_curve[0].pwm = 50;
+    // Default fan curve (40% @ 30C, 50% @ 33C, 60% @ 35C, 100% @ 50C)
+    dev->fan_curve[0].pwm = 40;
     dev->fan_curve[0].temp = 30;
-    dev->fan_curve[1].pwm = 75;
-    dev->fan_curve[1].temp = 32;
-    dev->fan_curve[2].pwm = 100;
-    dev->fan_curve[2].temp = 36;
+    dev->fan_curve[1].pwm = 50;
+    dev->fan_curve[1].temp = 33;
+    dev->fan_curve[2].pwm = 60;
+    dev->fan_curve[2].temp = 35;
+    dev->fan_curve[3].pwm = 100;
+    dev->fan_curve[3].temp = 50;
 
     dev->setfan_msg.header[0] = 0x02;
     dev->setfan_msg.header[1] = 0x4d;
