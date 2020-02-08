@@ -98,7 +98,7 @@ static int kraken_send_message(struct usb_kraken *kraken,
 {
     int sent = 0;
     int retval = usb_bulk_msg(kraken->udev,
-                              usb_sndintpipe(kraken->udev, 2),
+                              usb_sndintpipe(kraken->udev, 1),
                               message, length, &sent, 3000);
 
     if (unlikely(sent != length)) {
