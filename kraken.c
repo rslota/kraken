@@ -53,7 +53,7 @@ struct kraken_status {
     u8 unknown_1;       // 03 or 02 or possibly other values
     u8 fan_rpm[2];      // big-endian
     u8 pump_rpm[2];     // big-endian
-    u8 unknown_2[100];   // 00 00 00 3f 02 00 01 08 1e 00
+    u8 unknown_2[1000];   // 00 00 00 3f 02 00 01 08 1e 00
 };
 
 struct kraken_autopoint {
