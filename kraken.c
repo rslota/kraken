@@ -882,11 +882,11 @@ static int kraken_probe(struct usb_interface *interface,
     dev->pump_curve[0].pwm = 60;
     dev->pump_curve[0].temp = 30;
     dev->pump_curve[1].pwm = 70;
-    dev->pump_curve[1].temp = 34;
+    dev->pump_curve[1].temp = 35;
     dev->pump_curve[2].pwm = 80;
-    dev->pump_curve[2].temp = 38;
+    dev->pump_curve[2].temp = 40;
     dev->pump_curve[3].pwm = 100;
-    dev->pump_curve[3].temp = 45;
+    dev->pump_curve[3].temp = 55;
 
     // Default fan curve (40% @ 30C, 50% @ 33C, 60% @ 35C, 100% @ 50C)
     dev->fan_curve[0].pwm = 40;
@@ -894,9 +894,9 @@ static int kraken_probe(struct usb_interface *interface,
     dev->fan_curve[1].pwm = 50;
     dev->fan_curve[1].temp = 33;
     dev->fan_curve[2].pwm = 60;
-    dev->fan_curve[2].temp = 35;
+    dev->fan_curve[2].temp = 37;
     dev->fan_curve[3].pwm = 100;
-    dev->fan_curve[3].temp = 50;
+    dev->fan_curve[3].temp = 55;
 
     dev->setfan_msg.header[0] = 0x02;
     dev->setfan_msg.header[1] = 0x4d;
