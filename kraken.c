@@ -132,7 +132,7 @@ static int kraken_receive_message(struct usb_kraken *kraken,
                     expected_length, received);
     // }
 
-    return 0;
+    return received >= 17;
 }
 
 enum attr_index {
