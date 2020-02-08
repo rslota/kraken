@@ -53,7 +53,7 @@ struct kraken_status {
     u8 unknown_1;       // 03 or 02 or possibly other values
     u8 fan_rpm[2];      // big-endian
     u8 pump_rpm[2];     // big-endian
-    u8 unknown_2[1000];   // 00 00 00 3f 02 00 01 08 1e 00
+    u8 unknown_2[25];   // 00 00 00 3f 02 00 01 08 1e 00
 };
 
 struct kraken_autopoint {
@@ -118,19 +118,18 @@ static int kraken_receive_message(struct usb_kraken *kraken,
     int received = 0;
     int retval;
 
-    // expected_length = 17;
     memset(message, 0, expected_length);
 
     retval = usb_bulk_msg(kraken->udev,
                               usb_rcvintpipe(kraken->udev, 0x81),
-                              message, expected_length, &received, 10000);
+                              message, expected_length, &received, 3000);
 
-    // if (unlikely(received != expected_length)) {
+    if (unlikely(received != expected_length)) {
         dev_warn_ratelimited(
                     &kraken->udev->dev,
                     "USB bulk receive expected %d, but got %d bytes\n",
                     expected_length, received);
-    // }
+    }
 
     return received >= 17;
 }
