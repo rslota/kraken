@@ -118,7 +118,7 @@ static int kraken_receive_message(struct usb_kraken *kraken,
     int received = 0;
     int retval;
 
-    memset(message, 0, expected_length * 2);
+    memset(message, 0, expected_length * 5);
 
     retval = usb_bulk_msg(kraken->udev,
                               usb_rcvintpipe(kraken->udev, 0x81),
