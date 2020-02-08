@@ -115,7 +115,7 @@ static int kraken_send_message(struct usb_kraken *kraken,
 static int kraken_receive_message(struct usb_kraken *kraken,
                                   u8 *message, int expected_length)
 {
-    int received = 0;
+    long long received = 0;
     int retval;
 
     memset(message, 0, expected_length);
