@@ -126,7 +126,7 @@ static int kraken_receive_message(struct usb_kraken *kraken,
                               message, expected_length, &received, 3000);
 
     if (unlikely(received != expected_length)) {
-        dev_warn_ratelimited(
+        dev_dbg(
                     &kraken->udev->dev,
                     "USB bulk receive expected %d, but got %d bytes\n",
                     expected_length, received);
@@ -242,7 +242,7 @@ static int kraken_update(struct usb_kraken *kraken)
     if (kraken->pump_enable >= 2) {
         int pt = kraken_interpolate(kraken, kraken->pump_curve);
 
-        dev_warn_ratelimited(&kraken->udev->dev,
+        dev_dbg(&kraken->udev->dev,
                             "Auto adjusted %s to %d%%\n",
                             attr_labels[idx_pump_pwm], pt);
 
@@ -253,12 +253,12 @@ static int kraken_update(struct usb_kraken *kraken)
         int ft = kraken_interpolate(kraken, kraken->fan_curve);
         kraken->setfan_msg.fan_percent = ft;
 
-        dev_warn_ratelimited(&kraken->udev->dev,
+        dev_dbg(&kraken->udev->dev,
                             "Auto adjusted %s to %d%%\n",
                             attr_labels[idx_fan_pwm], ft);
     }
 
-    dev_warn_ratelimited(&kraken->udev->dev, "Writing %d%% to pump hardware",
+    dev_dbg(&kraken->udev->dev, "Writing %d%% to pump hardware",
                         kraken->setpump_msg.pump_percent);
 
     retval = kraken_send_message(kraken, (u8*)&kraken->setpump_msg,
@@ -271,7 +271,7 @@ static int kraken_update(struct usb_kraken *kraken)
     if (retval < 0)
         goto receive_failed;
 
-    dev_warn_ratelimited(&kraken->udev->dev, "Writing %d%% to fan hardware",
+    dev_dbg(&kraken->udev->dev, "Writing %d%% to fan hardware",
                         kraken->setfan_msg.fan_percent);
 
     retval = kraken_send_message(kraken, (u8*)&kraken->setfan_msg,
